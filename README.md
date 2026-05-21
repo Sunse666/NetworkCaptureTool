@@ -1,4 +1,4 @@
-# 接口捕获软件
+# NetworkCaptureTool
 
 一款面向接口自动化测试准备阶段的桌面工具。它通过内置浏览器驱动启动受控 Chrome，自动采集用户真实操作过程中产生的网络请求，并把请求参数、Cookie、令牌、响应、cURL 和批量导出文件结构化展示，帮助测试人员更快把网页操作沉淀为接口测试资产。
 <img width="1887" height="1053" alt="image" src="https://github.com/user-attachments/assets/37c83651-3558-4d0a-9152-7bd4ebcecb9b" />
