@@ -132,7 +132,7 @@ http://127.0.0.1:8710/
 
 ```powershell
 # 启动后端服务
-cd "D:\Code\Claude Coding\接口捕获软件\backend"
+cd "..\NetWorkCaptureTool\backend"
 pip install -r requirements.txt
 copy .env.example .env
 python run.py
@@ -140,7 +140,7 @@ python run.py
 
 ```powershell
 # 启动前端开发服务
-cd "D:\Code\Claude Coding\接口捕获软件\frontend"
+cd "..\NetWorkCaptureTool\frontend"
 npm install
 npm run dev
 ```
@@ -149,7 +149,7 @@ npm run dev
 
 ```powershell
 # 构建前端并打包桌面 exe
-cd "D:\Code\Claude Coding\接口捕获软件"
+cd "..\NetWorkCaptureTool"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_desktop_exe.ps1
 ```
 
