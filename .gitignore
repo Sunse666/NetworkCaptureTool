@@ -1,0 +1,52 @@
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Node / Vue 依赖与构建产物
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 本地配置与密钥
+.env
+*.env
+!*.env.example
+
+# 日志与运行时数据
+logs/
+backend/logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# 浏览器运行态与用户缓存，避免提交 Cookie、LocalStorage、Cache 等隐私数据
+backend/runtime/chrome-profile/
+backend/dist/
+
+# 保留项目内置浏览器驱动
+!backend/runtime/
+!backend/runtime/drivers/
+!backend/runtime/drivers/chromedriver.exe
+
+# 打包与临时文件
+build/
+dist/
+*.spec
+*.tmp
+*.temp
+
+# IDE / 系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

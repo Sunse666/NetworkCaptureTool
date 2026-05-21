@@ -1,0 +1,13 @@
+# 文本文件统一按 LF 入库，减少不同系统之间的换行差异。
+* text=auto eol=lf
+
+# 常见二进制资源按二进制处理，避免 Git 尝试做文本换行转换。
+*.exe binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary

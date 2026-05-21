@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>浏览器网络请求采集工具 UI 概念稿</title>
+  <style>
+    :root {
+      --ink: #18212f;
+      --muted: #738094;
+      --line: rgba(34, 48, 77, .12);
+      --panel: rgba(255, 255, 255, .78);
+      --panel-strong: rgba(255, 255, 255, .92);
+      --blue: #246bfe;
+      --green: #16a06b;
+      --orange: #f27b2f;
+      --red: #e84d4d;
+      --violet: #6457e8;
+      --shadow: 0 22px 60px rgba(28, 45, 80, .16);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+      background:
+        linear-gradient(rgba(247, 250, 255, .74), rgba(247, 250, 255, .74)),
+        url("data:image/svg+xml,%3Csvg width='900' height='900' viewBox='0 0 900 900' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' x2='1' y1='0' y2='1'%3E%3Cstop stop-color='%23ffd7a8'/%3E%3Cstop offset='.52' stop-color='%23d9efff'/%3E%3Cstop offset='1' stop-color='%23d9dcff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='900' height='900' fill='url(%23g)'/%3E%3Ccircle cx='170' cy='160' r='110' fill='%23ffffff' opacity='.32'/%3E%3Ccircle cx='720' cy='220' r='150' fill='%238ab4ff' opacity='.20'/%3E%3Cpath d='M80 650 C260 520 390 760 590 610 S820 500 900 610 V900 H0 V740 C20 710 45 680 80 650Z' fill='%23ffffff' opacity='.26'/%3E%3C/svg%3E"),
+        radial-gradient(circle at 12% 12%, rgba(255, 191, 117, .42), transparent 28%),
+        radial-gradient(circle at 86% 18%, rgba(78, 132, 255, .34), transparent 30%),
+        linear-gradient(135deg, #f8efe1 0%, #f6fbff 44%, #ecf0ff 100%);
+      background-size: cover;
+      background-position: center;
+      overflow: hidden;
+    }
+
+    .shell {
+      width: 1440px;
+      height: 900px;
+      padding: 24px;
+      position: relative;
+    }
+
+    .ambient-card {
+      position: absolute;
+      width: 260px;
+      height: 260px;
+      right: 30px;
+      top: 38px;
+      border-radius: 48px;
+      background: linear-gradient(145deg, rgba(255,255,255,.26), rgba(255,255,255,.06));
+      transform: rotate(14deg);
+      border: 1px solid rgba(255,255,255,.6);
+    }
+
+    .app {
+      height: 100%;
+      position: relative;
+      display: grid;
+      grid-template-rows: 82px 1fr;
+      gap: 18px;
+      border-radius: 34px;
+      padding: 18px;
+      background: rgba(255,255,255,.44);
+      border: 1px solid rgba(255,255,255,.72);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(28px);
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 240px 1fr auto;
+      gap: 16px;
+      align-items: center;
+      padding: 14px 16px;
+      border-radius: 24px;
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 800;
+      letter-spacing: .02em;
+    }
+
+    .logo {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      color: white;
+      border-radius: 15px;
+      background: conic-gradient(from 160deg, #246bfe, #25c08a, #ffb15c, #246bfe);
+      box-shadow: 0 10px 26px rgba(36, 107, 254, .28);
+    }
+
+    .brand small {
+      display: block;
+      color: var(--muted);
+      font-weight: 600;
+      margin-top: 2px;
+    }
+
+    .url-box {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 14px;
+      border-radius: 16px;
+      background: #f3f6fb;
+      color: #344052;
+      border: 1px solid var(--line);
+      font-size: 15px;
+    }
+
+    .url-box span {
+      color: var(--muted);
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .btn {
+      height: 44px;
+      border: 0;
+      border-radius: 15px;
+      padding: 0 16px;
+      font-weight: 800;
+      color: #344052;
+      background: #eef3fb;
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+
+    .btn.primary {
+      color: white;
+      background: linear-gradient(135deg, #246bfe, #20b777);
+      box-shadow: 0 12px 26px rgba(36, 107, 254, .24);
+    }
+
+    .btn.icon {
+      width: 44px;
+      padding: 0;
+      font-size: 18px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 240px 510px 1fr;
+      gap: 18px;
+      min-height: 0;
+    }
+
+    .panel {
+      min-height: 0;
+      border-radius: 28px;
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,.72);
+      box-shadow: 0 12px 32px rgba(38, 53, 84, .08);
+      overflow: hidden;
+    }
+
+    .side {
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section-title {
+      margin: 0 0 10px;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .stat-card {
+      padding: 16px;
+      border-radius: 20px;
+      background: linear-gradient(145deg, #18212f, #33435e);
+      color: white;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .stat-grid b {
+      display: block;
+      font-size: 24px;
+    }
+
+    .stat-grid span {
+      color: rgba(255,255,255,.66);
+      font-size: 12px;
+    }
+
+    .filter {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 13px;
+      margin-bottom: 9px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.68);
+      font-weight: 800;
+      font-size: 14px;
+      border: 1px solid var(--line);
+    }
+
+    .history-card {
+      padding: 13px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.68);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 800;
+      color: #334052;
+    }
+
+    .history-card small {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .badge {
+      min-width: 34px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 8px;
+      border-radius: 999px;
+      color: white;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .get { background: var(--blue); }
+    .post { background: var(--green); }
+    .put { background: var(--orange); }
+    .del { background: var(--red); }
+
+    .theme-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 8px;
+      padding-top: 12px;
+    }
+
+    .swatch {
+      width: 38px;
+      height: 38px;
+      border-radius: 14px;
+      border: 3px solid rgba(255,255,255,.84);
+      box-shadow: 0 8px 18px rgba(31, 48, 79, .16);
+    }
+
+    .swatch.one { background: linear-gradient(135deg, #f8efe1, #ecf0ff); }
+    .swatch.two { background: linear-gradient(135deg, #101827, #213d5a); }
+    .swatch.three { background: linear-gradient(135deg, #e8fff4, #d6e8ff); }
+    .swatch.four { background: linear-gradient(135deg, #ffe6e0, #fff7c2); }
+
+    .upload-bg {
+      margin-top: 10px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      color: #26364d;
+      font-size: 13px;
+      font-weight: 900;
+      background: rgba(255,255,255,.76);
+      border: 1px dashed rgba(36,107,254,.38);
+    }
+
+    .list {
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .list-head {
+      padding: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .search {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      margin-top: 12px;
+      color: var(--muted);
+      border-radius: 15px;
+      background: #f3f6fb;
+      border: 1px solid var(--line);
+    }
+
+    .requests {
+      padding: 12px;
+      overflow: hidden;
+    }
+
+    .request {
+      display: grid;
+      grid-template-columns: 64px 1fr auto auto;
+      gap: 12px;
+      align-items: center;
+      padding: 14px;
+      margin-bottom: 10px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.66);
+      border: 1px solid var(--line);
+    }
+
+    .request.active {
+      background: #fff;
+      box-shadow: 0 12px 28px rgba(36,107,254,.14);
+      border-color: rgba(36,107,254,.28);
+    }
+
+    .method {
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      color: white;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .path {
+      font-size: 14px;
+      font-weight: 900;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .meta {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .status {
+      font-weight: 900;
+      color: var(--green);
+    }
+
+    .new-mark {
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 8px;
+      border-radius: 999px;
+      color: #ffffff;
+      background: linear-gradient(135deg, #ff7a3d, #ff3d6e);
+      font-size: 11px;
+      font-weight: 1000;
+      letter-spacing: .04em;
+      box-shadow: 0 8px 18px rgba(255,61,110,.25);
+    }
+
+    .detail {
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      padding: 18px;
+      gap: 14px;
+    }
+
+    .detail-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .detail-title h2 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -.02em;
+    }
+
+    .copy {
+      height: 42px;
+      border: 0;
+      padding: 0 16px;
+      border-radius: 14px;
+      color: white;
+      font-weight: 900;
+      background: linear-gradient(135deg, #18212f, #246bfe);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .tab {
+      padding: 9px 13px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255,255,255,.68);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .tab.active {
+      color: white;
+      background: var(--ink);
+    }
+
+    .param-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      min-height: 0;
+    }
+
+    .param-card {
+      padding: 15px;
+      border-radius: 20px;
+      background: rgba(255,255,255,.72);
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }
+
+    .param-card h3 {
+      margin: 0 0 12px;
+      font-size: 15px;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 112px 1fr auto;
+      gap: 10px;
+      padding: 9px 0;
+      border-top: 1px solid rgba(34,48,77,.08);
+      font-family: "JetBrains Mono", "Cascadia Code", monospace;
+      font-size: 12px;
+    }
+
+    .kv:first-of-type {
+      border-top: 0;
+    }
+
+    .key {
+      color: #4c5a70;
+      font-weight: 800;
+    }
+
+    .value {
+      color: #172033;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pill {
+      padding: 2px 7px;
+      border-radius: 999px;
+      color: #7a4a12;
+      background: #fff1d8;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .curl {
+      padding: 16px;
+      border-radius: 20px;
+      background: #111827;
+      color: #d8e2ff;
+      font-family: "JetBrains Mono", "Cascadia Code", monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+    }
+
+    .curl .dim {
+      color: #7f8faa;
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="ambient-card"></div>
+    <section class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo">⌁</div>
+          <div>
+            接口捕获
+            <small>Browser Network Studio</small>
+          </div>
+        </div>
+        <div class="url-box">
+          <span>目标地址</span>
+          https://www.chanjing.cc/home/
+        </div>
+        <div class="actions">
+          <button class="btn">一键清除当前采集</button>
+          <button class="btn">重置登录态</button>
+          <button class="btn icon" title="设置">⚙</button>
+          <button class="btn primary">启动浏览器</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="panel side">
+          <div class="stat-card">
+            <div class="section-title" style="color:rgba(255,255,255,.58)">实时采集</div>
+            <div style="font-size:18px;font-weight:900">已连接 · Chromium</div>
+            <div class="stat-grid">
+              <div><b>128</b><span>请求总数</span></div>
+              <div><b>34</b><span>接口请求</span></div>
+            </div>
+            <div style="margin-top:14px;color:rgba(255,255,255,.7);font-size:12px;font-weight:800">
+              本轮批次：20260520153021
+            </div>
+          </div>
+
+          <div>
+            <p class="section-title">请求方法</p>
+            <div class="filter">GET <span class="badge get">42</span></div>
+            <div class="filter">POST <span class="badge post">19</span></div>
+            <div class="filter">PUT / PATCH <span class="badge put">4</span></div>
+            <div class="filter">DELETE <span class="badge del">1</span></div>
+          </div>
+
+          <div>
+            <p class="section-title">背景切换</p>
+            <div class="history-card">上传自定义背景 <small>支持本机图片文件</small></div>
+            <div class="history-card" style="margin-top:8px">调节透明度 <small>保留毛玻璃质感</small></div>
+            <div class="history-card" style="margin-top:8px">预设主题 <small>极光 / 夜色 / 薄荷 / 暖阳</small></div>
+          </div>
+
+          <div>
+            <p class="section-title">背景切换</p>
+            <div class="upload-bg">上传自定义背景图片</div>
+            <div class="theme-row">
+              <div class="swatch one"></div>
+              <div class="swatch two"></div>
+              <div class="swatch three"></div>
+              <div class="swatch four"></div>
+            </div>
+          </div>
+        </aside>
+
+        <section class="panel list">
+          <div class="list-head">
+            <div style="font-size:20px;font-weight:900">网络请求</div>
+            <div class="search">搜索 URL / 参数 / 状态码 · 新网址采集会重置 NEW 标记</div>
+          </div>
+          <div class="requests">
+            <div class="request active">
+              <div class="method post">POST</div>
+              <div>
+                <div class="path">/api/template_video/list</div>
+                <div class="meta">fetch · 146ms · application/json</div>
+              </div>
+              <div class="status">200</div>
+              <div class="new-mark">NEW</div>
+            </div>
+            <div class="request">
+              <div class="method get">GET</div>
+              <div>
+                <div class="path">/api/user/profile</div>
+                <div class="meta">xhr · 88ms · cookie</div>
+              </div>
+              <div class="status">200</div>
+              <div class="new-mark">NEW</div>
+            </div>
+            <div class="request">
+              <div class="method post">POST</div>
+              <div>
+                <div class="path">/api/project/save</div>
+                <div class="meta">fetch · 312ms · dynamic token</div>
+              </div>
+              <div class="status">200</div>
+              <div class="new-mark">NEW</div>
+            </div>
+            <div class="request">
+              <div class="method put">PATCH</div>
+              <div>
+                <div class="path">/api/piece/rename</div>
+                <div class="meta">xhr · 129ms · project_id</div>
+              </div>
+              <div class="status">200</div>
+              <div></div>
+            </div>
+            <div class="request">
+              <div class="method del">DELETE</div>
+              <div>
+                <div class="path">/api/piece/delete</div>
+                <div class="meta">fetch · 203ms · sensitive</div>
+              </div>
+              <div class="status" style="color:var(--red)">403</div>
+              <div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel detail">
+          <div class="detail-title">
+            <div>
+              <h2>/api/template_video/list</h2>
+              <div class="meta">https://www.chanjing.cc · POST · 200 OK · 146ms</div>
+            </div>
+            <button class="copy">一键复制精简 cURL</button>
+          </div>
+
+          <div class="tabs">
+            <div class="tab active">参数视图</div>
+            <div class="tab">Headers</div>
+            <div class="tab">Cookie</div>
+            <div class="tab">响应</div>
+            <div class="tab">cURL</div>
+          </div>
+
+          <div class="param-grid">
+            <div class="param-card">
+              <h3>Body JSON</h3>
+              <div class="kv"><div class="key">video_type</div><div class="value">1</div><div></div></div>
+              <div class="kv"><div class="key">tag_id</div><div class="value">[]</div><div></div></div>
+              <div class="kv"><div class="key">page</div><div class="value">1</div><div class="pill">分页</div></div>
+              <div class="kv"><div class="key">size</div><div class="value">15</div><div class="pill">分页</div></div>
+            </div>
+            <div class="param-card">
+              <h3>建议保留 Headers</h3>
+              <div class="kv"><div class="key">Content-Type</div><div class="value">application/json</div><div></div></div>
+              <div class="kv"><div class="key">Cookie</div><div class="value">_c_WBKFRo=n0Uftmy0HVlkZAoq; session=mock_session_20260521</div><div class="pill">鉴权</div></div>
+              <div class="kv"><div class="key">Origin</div><div class="value">https://www.chanjing.cc</div><div></div></div>
+              <div class="kv"><div class="key">Referer</div><div class="value">/home/</div><div></div></div>
+            </div>
+          </div>
+
+          <div class="curl">
+            curl.exe <span class="dim">'https://www.chanjing.cc/api/template_video/list'</span> `<br />
+            &nbsp;&nbsp;-H <span class="dim">'Content-Type: application/json'</span> `<br />
+            &nbsp;&nbsp;-b <span class="dim">'_c_WBKFRo=n0Uftmy0HVlkZAoq; session=mock_session_20260521'</span> `<br />
+            &nbsp;&nbsp;--data-raw <span class="dim">'{"video_type":1,"tag_id":[],"page":1,"size":15}'</span>
+          </div>
+        </section>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
