@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $ProjectRoot
 
 Write-Host "1/4 Build frontend dist..."
-# 先构建前端静态资源，PyInstaller 会把 dist 目录打进桌面版运行包。
+# Build frontend static assets before packaging them into the desktop bundle.
 Push-Location (Join-Path $ProjectRoot "frontend")
 npm run build
 Pop-Location
@@ -21,22 +21,28 @@ if (-not (Test-Path $driverPath)) {
   throw "Bundled chromedriver is missing: $driverPath"
 }
 
-# 桌面版默认使用 SQLite 和内置驱动，避免用户机器必须安装 MySQL 或手动配置环境。
+# Desktop defaults use SQLite and the bundled driver.
 $desktopEnv = Join-Path $ProjectRoot "config\desktop.env.example"
 $backendEnv = Join-Path $backendDir ".env"
 Copy-Item $desktopEnv $backendEnv -Force
 
 Write-Host "3/4 Install PyInstaller..."
-# 打包机需要 PyInstaller；普通用户运行 exe 时不需要 Python 环境。
+# PyInstaller is only needed on the build machine.
 python -m pip install pyinstaller
 
 Write-Host "4/4 Package desktop launcher exe..."
+$packageDistDir = Join-Path $backendDir "dist\.package"
+if (Test-Path $packageDistDir) {
+  Remove-Item -LiteralPath $packageDistDir -Recurse -Force
+}
+
 Push-Location $backendDir
 python -m PyInstaller `
   --noconfirm `
   --clean `
   --name "NetworkCaptureTool" `
   --console `
+  --distpath "$packageDistDir" `
   --add-data "app;app" `
   --add-data "..\frontend\dist;frontend\dist" `
   --add-data "runtime\drivers;runtime\drivers" `
@@ -49,7 +55,6 @@ python -m PyInstaller `
   --hidden-import "pydantic_settings" `
   --hidden-import "selenium" `
   --hidden-import "selenium.webdriver.chrome.webdriver" `
-  --hidden-import "websocket" `
   --hidden-import "uvicorn.logging" `
   --hidden-import "uvicorn.loops.auto" `
   --hidden-import "uvicorn.protocols.http.auto" `
@@ -57,8 +62,57 @@ python -m PyInstaller `
   desktop_launcher.py
 Pop-Location
 
-# 只保留最终可运行目录，清理 PyInstaller 中间产物，避免项目目录越来越乱。
+# Replace only program files and keep runtime data, so active Chrome profile tabs are not touched.
 $exePath = Join-Path $backendDir "dist\NetworkCaptureTool\NetworkCaptureTool.exe"
+$targetDir = Split-Path $exePath
+$targetInternalDir = Join-Path $targetDir "_internal"
+$packagedDir = Join-Path $packageDistDir "NetworkCaptureTool"
+$packagedExePath = Join-Path $packagedDir "NetworkCaptureTool.exe"
+$packagedInternalDir = Join-Path $packagedDir "_internal"
+
+if (-not (Test-Path $packagedExePath) -or -not (Test-Path $packagedInternalDir)) {
+  throw "Packaged app is incomplete: $packagedDir"
+}
+
+if (Test-Path $exePath) {
+  $resolvedExePath = (Resolve-Path $exePath).Path
+  Get-CimInstance Win32_Process |
+    Where-Object { $_.Name -eq "NetworkCaptureTool.exe" -and $_.ExecutablePath -eq $resolvedExePath } |
+    ForEach-Object {
+      try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
+    }
+  $deadline = (Get-Date).AddSeconds(10)
+  while ((Get-Date) -lt $deadline) {
+    $stillRunning = Get-CimInstance Win32_Process |
+      Where-Object { $_.Name -eq "NetworkCaptureTool.exe" -and $_.ExecutablePath -eq $resolvedExePath } |
+      Select-Object -First 1
+    if (-not $stillRunning) { break }
+    Start-Sleep -Milliseconds 200
+  }
+}
+if (Test-Path $targetInternalDir) {
+  $resolvedInternalDir = (Resolve-Path $targetInternalDir).Path
+  Get-CimInstance Win32_Process |
+    Where-Object {
+      $_.Name -eq "chromedriver.exe" -and
+      ($_.ExecutablePath -like "$resolvedInternalDir*" -or $_.CommandLine -like "*$resolvedInternalDir*")
+    } |
+    ForEach-Object {
+      try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
+    }
+  Start-Sleep -Milliseconds 500
+}
+
+New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+if (Test-Path $exePath) {
+  Remove-Item -LiteralPath $exePath -Force
+}
+if (Test-Path $targetInternalDir) {
+  Remove-Item -LiteralPath $targetInternalDir -Recurse -Force
+}
+Copy-Item -LiteralPath $packagedExePath -Destination $exePath -Force
+Copy-Item -LiteralPath $packagedInternalDir -Destination $targetInternalDir -Recurse -Force
+
 $buildDir = Join-Path $backendDir "build"
 $specFile = Join-Path $backendDir "NetworkCaptureTool.spec"
 if (Test-Path $buildDir) {
@@ -66,5 +120,8 @@ if (Test-Path $buildDir) {
 }
 if (Test-Path $specFile) {
   Remove-Item -LiteralPath $specFile -Force
+}
+if (Test-Path $packageDistDir) {
+  Remove-Item -LiteralPath $packageDistDir -Recurse -Force
 }
 Write-Host "Build completed: $exePath"

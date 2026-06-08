@@ -17,8 +17,8 @@ def start_capture(payload: StartCaptureRequest, db: Session = Depends(get_db)) -
 
 @router.post("/stop-browser")
 def stop_browser(db: Session = Depends(get_db)) -> ApiResponse:
-    """关闭当前浏览器。"""
-    return ok(capture_service.stop_browser(db), "浏览器已关闭。")
+    """停止当前采集，保留受控浏览器。"""
+    return ok(capture_service.stop_browser(db), "采集已停止，浏览器保持打开。")
 
 
 @router.post("/reset-profile")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import socket
 import subprocess
@@ -13,10 +14,11 @@ from typing import Any
 from selenium import webdriver
 from selenium.common import InvalidSessionIdException, NoSuchWindowException, TimeoutException, WebDriverException
 from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.support.ui import WebDriverWait
+from urllib3.exceptions import HTTPError as Urllib3HTTPError
 
 from app.core.config import get_settings, resolve_resource_path, resolve_runtime_path
 from app.core.exceptions import AppError
-from app.services.cdp_network_listener import CdpNetworkListener
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,13 @@ class BrowserService:
     """浏览器控制服务：启动浏览器、访问目标网址并读取网络性能日志。"""
 
     DRIVER_QUIT_TIMEOUT_SECONDS = 5
-    USE_PERFORMANCE_LOG_FALLBACK = False
+    INITIAL_DOM_READY_TIMEOUT_SECONDS = 6
+    KILL_PROFILE_PROCESSES_BEFORE_CREATE = False
+    CHROME_DISABLED_FEATURES = (
+        "Translate",
+        "AutomationControlled",
+        "BackForwardCache",
+    )
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -33,16 +41,17 @@ class BrowserService:
         self._network_enabled_handles: set[str] = set()
         self._debugger_port: int | None = None
         self._debugger_address: str | None = None
-        self._cdp_listener = CdpNetworkListener()
 
     def start(self, url: str) -> None:
         """启动或复用浏览器访问目标网址。"""
         try:
-            if self.driver is None or not self._is_session_alive():
+            is_reusing_browser = self.driver is not None and self._is_session_alive()
+            if not is_reusing_browser:
                 self.driver = self._create_chrome_driver()
-            self._start_cdp_listener()
             self._enable_network_for_open_windows()
             self.clear_network_events()
+            if is_reusing_browser:
+                self._open_new_capture_tab()
             self._open_target_url(url)
             logger.info("浏览器已访问目标网站：%s", url)
         except (InvalidSessionIdException, NoSuchWindowException) as exc:
@@ -55,19 +64,22 @@ class BrowserService:
             raise AppError("浏览器启动或访问网站失败，请检查浏览器驱动、端口占用或目标网站是否可访问。", "BROWSER_START_FAILED", 500) from exc
 
     def stop(self) -> None:
-        """关闭当前浏览器实例，避免残留过多浏览器进程。"""
+        """停止当前采集控制，保留受控 Chrome 里的用户标签页。"""
+        logger.info("采集控制已停止，受控浏览器保持打开")
+
+    def close(self) -> None:
+        """强制关闭受控浏览器，仅用于重置 profile 等明确需要销毁会话的场景。"""
         driver = self.driver
         profile_dir = self.settings.browser_user_data_dir.resolve()
         if driver is not None:
             self._quit_driver_safely(driver)
-        self._cdp_listener.stop()
         self._terminate_profile_processes(profile_dir)
         self._discard_driver()
-        logger.info("浏览器已关闭")
+        logger.info("受控浏览器已关闭")
 
     def reset_profile(self) -> None:
         """清理内置浏览器登录态，用于目标站反复提示 token 无效时重新登录。"""
-        self.stop()
+        self.close()
         profile_dir = self.settings.browser_user_data_dir.resolve()
         self._terminate_profile_processes(profile_dir)
         if profile_dir.exists():
@@ -78,9 +90,6 @@ class BrowserService:
         """开始新采集前清空旧 performance 日志，保证首屏采集只包含当前目标页。"""
         if self.driver is None:
             return
-        self._cdp_listener.clear_events()
-        if not self.USE_PERFORMANCE_LOG_FALLBACK:
-            return
         try:
             self.driver.get_log("performance")
         except WebDriverException:
@@ -90,10 +99,6 @@ class BrowserService:
         """读取并解析 Chrome performance 日志，包含受控浏览器内已打开标签页的请求。"""
         if self.driver is None:
             raise AppError("浏览器尚未启动，请先启动浏览器后再采集请求。", "BROWSER_NOT_STARTED")
-        cdp_events = self._cdp_listener.poll_events()
-        if cdp_events or not self.USE_PERFORMANCE_LOG_FALLBACK:
-            return cdp_events
-        # 只有回退到 Selenium performance log 时才扫描标签页；常规 CDP 监听已自动附着多标签页，频繁扫描会明显拖慢浏览器。
         self._enable_network_for_open_windows()
         try:
             logs = self.driver.get_log("performance")
@@ -111,16 +116,6 @@ class BrowserService:
         """通过 CDP 读取响应体，读取失败时返回 None，避免影响请求主流程入库。"""
         if self.driver is None:
             return None
-        cdp_body = self._cdp_listener.get_response_body(request_id)
-        if cdp_body is not None:
-            if cdp_body.get("base64Encoded"):
-                body = cdp_body.get("body", "")
-                return {
-                    "__hidden_payload__": True,
-                    "reason": "响应体为二进制或压缩内容，已隐藏原文。",
-                    "size": len(body),
-                }
-            return cdp_body.get("body")
         webview, raw_request_id = self._split_scoped_request_id(request_id)
         original_handle = self._safe_current_window_handle()
         try:
@@ -147,18 +142,31 @@ class BrowserService:
     def _create_chrome_driver(self) -> webdriver.Chrome:
         """创建开启 performance log 的 Chrome，用于采集网络请求。"""
         options = webdriver.ChromeOptions()
-        if self.USE_PERFORMANCE_LOG_FALLBACK:
-            options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+        options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
         # 抓包工具只需要把页面导航发出去，不应等待所有资源加载完成后才返回启动结果。
         options.page_load_strategy = "none"
         options.add_argument("--remote-allow-origins=*")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--lang=zh-CN")
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--disable-notifications")
+        options.add_argument(f"--disable-features={','.join(self.CHROME_DISABLED_FEATURES)}")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-client-side-phishing-detection")
         # 某些站点会用 navigator.webdriver 识别自动化浏览器并切换到特殊登录链路；这里隐藏该标记，避免目标站误触发异常 token 流程。
         options.add_argument("--disable-blink-features=AutomationControlled")
         user_data_dir = resolve_runtime_path(self.settings.browser_user_data_dir)
-        self._terminate_profile_processes(user_data_dir)
+        existing_debugger_address = self._find_existing_debugger_address(user_data_dir)
+        if existing_debugger_address:
+            try:
+                return self._attach_to_existing_chrome(existing_debugger_address)
+            except WebDriverException:
+                logger.debug("接管已打开的受控 Chrome 失败，将尝试创建新浏览器。", exc_info=True)
+        if self.KILL_PROFILE_PROCESSES_BEFORE_CREATE:
+            self._terminate_profile_processes(user_data_dir)
         user_data_dir.mkdir(parents=True, exist_ok=True)
         # 使用独立 Chrome 用户目录保存登录态，避免每次启动都是全新匿名浏览器导致目标站提示 token 无效。
         options.add_argument(f"--user-data-dir={user_data_dir}")
@@ -172,10 +180,18 @@ class BrowserService:
             options.add_argument("--headless=new")
         if self.settings.chrome_binary:
             options.binary_location = self.settings.chrome_binary
-        if self.USE_PERFORMANCE_LOG_FALLBACK:
-            options.add_experimental_option("perfLoggingPrefs", {"enableNetwork": True, "enablePage": True})
+        options.add_experimental_option("perfLoggingPrefs", {"enableNetwork": True, "enablePage": True})
+        self._apply_chrome_lifecycle_options(options)
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
+        options.add_experimental_option(
+            "prefs",
+            {
+                "credentials_enable_service": False,
+                "profile.password_manager_enabled": False,
+                "intl.accept_languages": "zh-CN,zh",
+            },
+        )
 
         driver_path = self._resolve_driver_path()
         if not driver_path:
@@ -188,7 +204,9 @@ class BrowserService:
         try:
             driver = webdriver.Chrome(service=service, options=options)
         except WebDriverException:
-            # Chrome 用户目录被残留进程占用时会启动崩溃，清理本工具进程后给调用方重试一次。
+            if not self.KILL_PROFILE_PROCESSES_BEFORE_CREATE:
+                raise
+            # 仅在显式开启清理开关时关闭受控 profile，避免误伤用户手动打开的标签页。
             self._terminate_profile_processes(user_data_dir)
             driver = webdriver.Chrome(service=service, options=options)
         # 给页面加载设置明确上限，用户在启动中关闭窗口或页面长期加载时不会无限等待。
@@ -198,17 +216,76 @@ class BrowserService:
         driver.execute_cdp_cmd(
             "Page.addScriptToEvaluateOnNewDocument",
             {
-                "source": """
-Object.defineProperty(navigator, 'webdriver', {
-  get: () => undefined
-});
-""",
+                "source": self._page_lifecycle_script(),
             },
         )
         # 开启 Network 域后，后续才能通过 Network.getResponseBody 读取响应体。
         driver.execute_cdp_cmd("Network.enable", {})
         self._network_enabled_handles = {driver.current_window_handle}
         return driver
+
+    def _apply_chrome_lifecycle_options(self, options: webdriver.ChromeOptions) -> None:
+        """Keep controlled Chrome open if the desktop app or chromedriver exits."""
+        options.add_experimental_option("detach", True)
+
+    def _attach_to_existing_chrome(self, debugger_address: str) -> webdriver.Chrome:
+        """接管仍在运行的受控 Chrome，避免因 profile 占用而关闭用户手动标签页。"""
+        options = webdriver.ChromeOptions()
+        options.add_experimental_option("debuggerAddress", debugger_address)
+        driver_path = self._resolve_driver_path()
+        if not driver_path:
+            raise AppError(
+                "未找到项目内置 chromedriver，请确认 runtime/drivers/chromedriver.exe 已随软件一起发布。",
+                "BUNDLED_DRIVER_NOT_FOUND",
+                500,
+            )
+        driver = webdriver.Chrome(service=ChromeService(executable_path=driver_path), options=options)
+        driver.set_page_load_timeout(self.settings.browser_page_load_timeout)
+        driver.set_script_timeout(self.settings.browser_script_timeout)
+        self._debugger_address = debugger_address
+        self._debugger_port = int(debugger_address.rsplit(":", 1)[1])
+        try:
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": self._page_lifecycle_script()})
+            driver.execute_cdp_cmd("Network.enable", {})
+            self._network_enabled_handles = {driver.current_window_handle}
+        except WebDriverException:
+            self._network_enabled_handles = set()
+        return driver
+
+    def _find_existing_debugger_address(self, profile_dir: Path) -> str | None:
+        """查找仍在运行的受控 Chrome 调试端口，便于重启桌面端后无损接回。"""
+        if sys.platform != "win32":
+            return None
+        script = r"""
+param([string]$ProfileDir)
+$escaped = [WildcardPattern]::Escape($ProfileDir)
+Get-CimInstance Win32_Process |
+  Where-Object {
+    $_.Name -eq 'chrome.exe' -and
+    $_.CommandLine -like "*$escaped*" -and
+    $_.CommandLine -like "*--remote-debugging-port*"
+  } |
+  Select-Object -First 1 -ExpandProperty CommandLine
+"""
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script, "-ProfileDir", str(profile_dir)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception:
+            logger.debug("查找已打开受控 Chrome 调试端口失败。", exc_info=True)
+            return None
+        return self._debugger_address_from_command_line(result.stdout)
+
+    @staticmethod
+    def _debugger_address_from_command_line(command_line: str) -> str | None:
+        match = re.search(r"--remote-debugging-port(?:=|\s+)(\d+)", command_line or "")
+        if not match:
+            return None
+        return f"127.0.0.1:{match.group(1)}"
 
     def _terminate_profile_processes(self, profile_dir: Path) -> None:
         """只结束占用本工具 Chrome 用户目录的残留进程，不影响用户日常浏览器。"""
@@ -258,12 +335,11 @@ $targets | Sort-Object -Unique | ForEach-Object {
             logger.debug("浏览器关闭时出现异常，将继续执行进程清理：%s", error_holder[0])
 
     def _open_target_url(self, url: str) -> None:
-        """通过 CDP 发起页面导航，不等待目标站完整加载，避免慢页面卡住启动接口。"""
+        """发起页面导航，不等待目标站完整加载，避免慢页面卡住启动接口。"""
         if self.driver is None:
             return
         try:
-            self.driver.execute_cdp_cmd("Page.enable", {})
-            self.driver.execute_cdp_cmd("Page.navigate", {"url": url})
+            self.driver.get(url)
         except TimeoutException:
             if not self._is_session_alive():
                 raise
@@ -272,12 +348,61 @@ $targets | Sort-Object -Unique | ForEach-Object {
                 self.settings.browser_page_load_timeout,
                 url,
             )
+            try:
+                self.driver.execute_script("window.stop();")
+            except WebDriverException:
+                logger.debug("页面加载超时后执行 window.stop 失败。", exc_info=True)
+        except WebDriverException:
+            # 某些 SPA 站点在 WebDriver 导航期间会触发加载中断，回退到 CDP 导航能保留浏览器窗口继续交互。
+            if not self._is_session_alive():
+                raise
+            logger.debug("WebDriver 导航失败，尝试 CDP Page.navigate：%s", url, exc_info=True)
+            self.driver.execute_cdp_cmd("Page.enable", {})
+            self.driver.execute_cdp_cmd("Page.navigate", {"url": url})
+        finally:
+            self._wait_for_interactive_dom()
 
-    def _start_cdp_listener(self) -> None:
-        """启动浏览器级 CDP 监听器，用于捕获用户后续新开标签页的请求。"""
-        if self._cdp_listener.is_running:
+    def _open_new_capture_tab(self) -> None:
+        """Open a fresh tab for a new capture run so the user's current page stays intact."""
+        if self.driver is None:
             return
-        self._cdp_listener.start(self._debugger_address)
+        try:
+            self.driver.switch_to.new_window("tab")
+        except WebDriverException:
+            logger.debug("新建采集标签页失败，将复用当前标签页。", exc_info=True)
+
+    def _wait_for_interactive_dom(self) -> None:
+        """Initial navigation only needs a usable DOM; SPA content may continue loading after this."""
+        if self.driver is None:
+            return
+        try:
+            WebDriverWait(self.driver, self.INITIAL_DOM_READY_TIMEOUT_SECONDS).until(
+                lambda driver: (
+                    driver.execute_script("return document.readyState") in ("interactive", "complete")
+                    and driver.execute_script("return document.body && document.body.children.length > 0")
+                )
+            )
+        except (TimeoutException, WebDriverException):
+            logger.debug("等待初始 DOM 可交互超时，继续保留浏览器供用户手动操作。", exc_info=True)
+
+    def _page_lifecycle_script(self) -> str:
+        """Keep SPA pages interactive when Chrome restores them from history cache."""
+        return """
+Object.defineProperty(navigator, 'webdriver', {
+  get: () => undefined
+});
+Object.defineProperty(navigator, 'languages', {
+  get: () => ['zh-CN', 'zh']
+});
+Object.defineProperty(navigator, 'plugins', {
+  get: () => [1, 2, 3, 4, 5]
+});
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    window.location.reload();
+  }
+});
+"""
 
     def _find_free_port(self) -> int:
         """获取本机空闲端口，供 Chrome remote debugging 使用。"""
@@ -365,7 +490,7 @@ $targets | Sort-Object -Unique | ForEach-Object {
         try:
             _ = self.driver.current_url
             return True
-        except WebDriverException:
+        except (WebDriverException, Urllib3HTTPError, OSError):
             self._discard_driver()
             return False
 

@@ -56,12 +56,14 @@ class CaptureService:
         return self._batch_out(batch)
 
     def stop_browser(self, db: Session) -> dict[str, str]:
-        """关闭浏览器并结束当前批次。"""
+        """停止采集并结束当前批次，保留受控浏览器中的用户标签页。"""
         if self.current_batch_no:
             CaptureRepository(db).finish_batch(self.current_batch_no)
-            SettingsRepository(db).create_log("browser", "stop_browser", "success", "关闭浏览器", self.current_batch_no)
+            SettingsRepository(db).create_log("browser", "stop_browser", "success", "停止采集并保留浏览器", self.current_batch_no)
+            self.current_batch_no = None
         browser_service.stop()
-        return {"status": "stopped"}
+        self.parser.reset()
+        return {"status": "capture_stopped"}
 
     def reset_browser_profile(self, db: Session) -> dict[str, str]:
         """清理内置浏览器登录态，解决目标站 token 过期或污染后反复弹错的问题。"""

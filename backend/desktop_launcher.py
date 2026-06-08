@@ -10,6 +10,7 @@ from pathlib import Path
 from app.core.config import get_settings
 
 _LOG_HANDLE = None
+KILL_PROFILE_CHROME_ON_STARTUP = False
 
 
 def main() -> None:
@@ -81,8 +82,11 @@ $oldApps = $all | Where-Object {
   $_.ProcessId -ne [int]$CurrentPid -and
   $_.ExecutablePath -eq $AppPath
 }
-$toolChrome = $all | Where-Object {
-  $_.Name -eq 'chrome.exe' -and $_.CommandLine -like "*$escapedProfile*"
+$toolChrome = @()
+if ($env:NETWORK_CAPTURE_KILL_PROFILE_CHROME_ON_STARTUP -eq '1') {
+  $toolChrome = $all | Where-Object {
+    $_.Name -eq 'chrome.exe' -and $_.CommandLine -like "*$escapedProfile*"
+  }
 }
 $toolDrivers = $all | Where-Object {
   $_.Name -eq 'chromedriver.exe' -and (
@@ -96,6 +100,11 @@ $toolDrivers = $all | Where-Object {
   }
 """
     try:
+        env = None
+        if KILL_PROFILE_CHROME_ON_STARTUP:
+            import os
+
+            env = {**os.environ, "NETWORK_CAPTURE_KILL_PROFILE_CHROME_ON_STARTUP": "1"}
         subprocess.run(
             [
                 "powershell",
@@ -118,6 +127,7 @@ $toolDrivers = $all | Where-Object {
             text=True,
             timeout=8,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=env,
         )
         # Windows 释放监听端口通常很快，循环等待能减少新实例被迫切到随机端口的概率。
         settings = get_settings()
