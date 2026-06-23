@@ -7,6 +7,7 @@ from selenium.common import WebDriverException
 from app.core.exceptions import AppError
 from app.services import browser_service as browser_service_module
 from app.services.batch_export_service import BatchExportService
+from app.services.browser_providers import get_provider, list_supported_browsers
 from app.services.browser_service import BrowserService
 from app.services.capture_service import CaptureService
 from app.services.curl_service import CurlService
@@ -181,7 +182,7 @@ def test_request_ids_summary_keeps_operation_log_short():
 def test_browser_service_disables_bfcache_for_spa_back_navigation():
     service = BrowserService()
 
-    assert "BackForwardCache" in service.CHROME_DISABLED_FEATURES
+    assert "BackForwardCache" in service.DISABLED_FEATURES
     lifecycle_script = service._page_lifecycle_script()
     assert "pageshow" in lifecycle_script
     assert "event.persisted" in lifecycle_script
@@ -231,6 +232,7 @@ def test_browser_service_does_not_kill_profile_before_normal_driver_create():
 
 def test_browser_service_does_not_kill_profile_after_driver_create_failure_by_default(tmp_path, monkeypatch):
     service = BrowserService()
+    service.set_browser_type("chrome")
     calls = []
 
     def fail_to_create_driver(*args, **kwargs):
@@ -244,12 +246,12 @@ def test_browser_service_does_not_kill_profile_after_driver_create_failure_by_de
     monkeypatch.setattr(browser_service_module.webdriver, "Chrome", fail_to_create_driver)
 
     with pytest.raises(WebDriverException):
-        service._create_chrome_driver()
+        service._create_driver()
 
     assert calls == []
 
 
-def test_browser_service_stop_preserves_controlled_chrome_tabs():
+def test_browser_service_stop():
     service = BrowserService()
     calls = []
     driver = object()
@@ -274,7 +276,7 @@ def test_browser_service_parses_existing_debugger_port_from_command_line():
     assert BrowserService._debugger_address_from_command_line(command_line) == "127.0.0.1:52956"
 
 
-def test_browser_service_detaches_chrome_from_driver_lifecycle():
+def test_browser_service_detaches_browser_from_driver_lifecycle():
     service = BrowserService()
 
     class FakeOptions:
@@ -286,13 +288,14 @@ def test_browser_service_detaches_chrome_from_driver_lifecycle():
 
     options = FakeOptions()
 
-    service._apply_chrome_lifecycle_options(options)
+    service._provider.apply_lifecycle_options(options)
 
     assert options.experimental_options["detach"] is True
 
 
-def test_browser_service_reset_profile_closes_controlled_chrome_before_delete(tmp_path):
+def test_browser_service_reset_profile_closes_controlled_browser_before_delete(tmp_path):
     service = BrowserService()
+    service.set_browser_type("chrome")
     calls = []
     profile_dir = tmp_path / "chrome-profile"
     profile_dir.mkdir()
@@ -308,3 +311,42 @@ def test_browser_service_reset_profile_closes_controlled_chrome_before_delete(tm
     assert "quit" in calls
     assert ("kill_profile", profile_dir) in calls
     assert not profile_dir.exists()
+
+
+def test_browser_provider_switching():
+    """set_browser_type 应能运行时切换 Chrome ↔ WebView2 并更新 provider。"""
+    service = BrowserService()
+    service.set_browser_type("webview2")
+    assert service._provider.browser_type == "webview2"
+    assert service._provider.browser_process_name == "msedgewebview2.exe"
+    service.set_browser_type("chrome")
+    assert service._provider.browser_type == "chrome"
+    assert service._provider.browser_process_name == "chrome.exe"
+
+
+def test_edge_webview2_provider_basic():
+    """EdgeWebView2Provider 应返回正确的进程名、类型名和 option。"""
+    provider = get_provider("webview2")
+    assert provider.browser_type == "webview2"
+    assert provider.browser_process_name == "msedgewebview2.exe"
+    assert provider.driver_process_name == "msedgedriver.exe"
+    options = provider.create_options()
+    assert options is not None
+
+
+def test_chrome_provider_basic():
+    """ChromeBrowserProvider 应返回正确的进程名、类型名和 option。"""
+    provider = get_provider("chrome")
+    assert provider.browser_type == "chrome"
+    assert provider.browser_process_name == "chrome.exe"
+    assert provider.driver_process_name == "chromedriver.exe"
+    options = provider.create_options()
+    assert options is not None
+
+
+def test_list_supported_browsers():
+    """应返回 Chrome 和 WebView2 两种浏览器。"""
+    browsers = list_supported_browsers()
+    browser_types = {b["type"] for b in browsers}
+    assert "chrome" in browser_types
+    assert "webview2" in browser_types

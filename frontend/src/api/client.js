@@ -50,6 +50,7 @@ export const api = {
   }),
   listRequests: (params) => request(`/api/requests?${new URLSearchParams(params).toString()}`),
   getRequestDetail: (id) => request(`/api/requests/${id}`),
+  getResponseBody: (id) => request(`/api/requests/${id}/response-body`),
   exportRequests: (requestIds, format) => request("/api/requests/export", {
     method: "POST",
     body: JSON.stringify({ request_ids: requestIds, format }),

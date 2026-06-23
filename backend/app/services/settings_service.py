@@ -32,6 +32,13 @@ class SettingsService:
         repo = SettingsRepository(db)
         setting = repo.upsert_setting(key, value, description)
         repo.create_log("settings", "save_setting", "success", f"保存设置：{key}")
+        if key == "browser_type" and isinstance(value, dict):
+            bt = value.get("type")
+            if bt in ("chrome", "webview2"):
+                from app.core.config import get_settings
+                from app.services.browser_service import browser_service
+                get_settings().browser_type = bt
+                browser_service.set_browser_type(bt)
         return setting.setting_value
 
 

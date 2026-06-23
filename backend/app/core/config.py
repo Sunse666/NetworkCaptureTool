@@ -58,7 +58,8 @@ class Settings(BaseSettings):
     database_engine: str = "mysql"
     sqlite_path: Path = Field(default=Path("runtime/network_capture_studio.db"))
 
-    browser_type: str = "chrome"
+    auto_launch_browser: bool = True
+    browser_type: str = "webview2"
     browser_headless: bool = False
     browser_window_width: int = 1440
     browser_window_height: int = 900
@@ -67,6 +68,9 @@ class Settings(BaseSettings):
     browser_user_data_dir: Path = Field(default=Path("runtime/chrome-profile"))
     chrome_binary: str | None = None
     chromedriver_path: str | None = "runtime/drivers/chromedriver.exe"
+    edge_binary: str | None = None
+    msedgedriver_path: str | None = "runtime/drivers/msedgedriver.exe"
+    edge_user_data_dir: Path = Field(default=Path("runtime/edge-profile"))
     frontend_dist_dir: Path = Field(default=Path("../frontend/dist"))
 
     log_dir: Path = Field(default=Path("logs"))

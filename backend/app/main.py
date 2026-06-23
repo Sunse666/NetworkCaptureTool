@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -27,6 +29,32 @@ def _mount_frontend(app: FastAPI) -> None:
         return FileResponse(index_file)
 
 
+def _auto_launch_frontend() -> None:
+    """在浏览器中打开前端面板，用户无需手动输入地址。"""
+    import logging
+    from app.services.browser_service import browser_service
+
+    logger = logging.getLogger(__name__)
+    settings = get_settings()
+    url = f"http://{settings.app_host}:{settings.app_port}/"
+    try:
+        browser_service.start(url)
+        logger.info("已自动打开浏览器面板：%s", url)
+    except Exception as exc:
+        logger.warning("自动打开浏览器面板失败：%s，请手动打开 %s", exc, url)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """应用生命周期：启动后自动打开浏览器前端面板。"""
+    settings = get_settings()
+    if settings.auto_launch_browser:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, _auto_launch_frontend)
+    yield
+
+
 def create_app() -> FastAPI:
     """创建 FastAPI 应用，集中注册中间件、路由和异常处理。"""
     setup_logging()
@@ -34,9 +62,8 @@ def create_app() -> FastAPI:
         ensure_database_exists()
         Base.metadata.create_all(bind=engine)
     except (SQLAlchemyError, Exception) as exc:
-        # 数据库配置错误时仍允许服务启动，前端可通过健康检查看到中文提示。
         mark_database_error(exc)
-    app = FastAPI(title="浏览器网络请求采集工具接口", version="0.1.0")
+    app = FastAPI(title="浏览器网络请求采集工具接口", version="0.1.0", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

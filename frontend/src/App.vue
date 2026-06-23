@@ -22,7 +22,7 @@
     </section>
 
     <RequestDetail :open="Boolean(store.selectedRequest)" @close="store.selectedRequest = null" />
-    <SettingsDrawer :open="settingsOpen" @close="settingsOpen = false" @save="saveBackground" />
+    <SettingsDrawer :open="settingsOpen" @close="settingsOpen = false" @save="saveSettings" />
   </main>
 </template>
 
@@ -49,7 +49,6 @@ const presetBackgrounds = {
 };
 
 const backgroundStyle = computed(() => {
-  // 背景支持预设、纯色和图片三种模式，同时叠加遮罩保证文字可读。
   const glassBlur = `${Math.round((Number(store.background.blur) || 0) * 0.45)}px`;
   const sharedStyle = {
     "--glass-blur": glassBlur,
@@ -77,7 +76,6 @@ onBeforeUnmount(() => {
 });
 
 async function loadInitialData() {
-  // 初始化时只加载界面设置，失败时给中文提示但不阻塞页面展示。
   await safeRun(async () => {
     const background = await api.getSetting("background");
     Object.assign(store.background, background);
@@ -88,7 +86,6 @@ async function startCapture() {
   await safeRun(async () => {
     store.loading = true;
     const batch = await api.startCapture(store.targetUrl.trim());
-    // 使用后端规范化后的地址回填输入框，例如 baidu.com 会显示为 https://baidu.com。
     store.targetUrl = batch.target_url;
     store.currentBatch = batch;
     store.requests = [];
@@ -102,14 +99,12 @@ async function startCapture() {
 }
 
 function startPolling() {
-  // 降低同步频率，避免后台采集过度抢占受控浏览器资源；后续若改 WebSocket 再单独确认技术方案。
   if (pollTimer) window.clearInterval(pollTimer);
   syncCurrentRequests();
   pollTimer = window.setInterval(syncCurrentRequests, CAPTURE_SYNC_INTERVAL_MS);
 }
 
 async function syncCurrentRequests() {
-  // 后台同步只合并新增请求，避免频繁拉全量列表造成 UI 延迟和接口压力。
   if (!store.currentBatch || syncing) return;
   syncing = true;
   try {
@@ -123,7 +118,6 @@ async function syncCurrentRequests() {
 }
 
 function mergeRequests(newRequests) {
-  // 按浏览器 request_id 去重；用户已点开的请求要保持已读，避免轮询又把 NEW 刷回来。
   if (!newRequests.length) return;
   const requestMap = new Map(store.requests.map((item) => [item.request_id, item]));
   for (const request of newRequests) {
@@ -183,33 +177,36 @@ async function loadRequests(batchNo = store.currentBatch?.batch_no) {
 }
 
 async function selectRequest(id) {
-  await safeRun(async () => {
-    // 点击请求即视为已读，先本地更新保证 NEW 标签马上消失。
-    store.viewedRequestIds.add(id);
-    store.requests = store.requests.map((request) => (request.id === id ? { ...request, is_new: false } : request));
-    const detail = await api.getRequestDetail(id);
-    store.selectedRequest = {
-      ...detail,
-      is_new: false,
-    };
-  });
+  store.viewedRequestIds.add(id);
+  store.requests = store.requests.map((request) => (request.id === id ? { ...request, is_new: false } : request));
+  const detail = await api.getRequestDetail(id);
+  store.selectedRequest = { ...detail, is_new: false };
+  // 响应体异步加载，不阻塞首屏展示
+  if (detail.is_api) {
+    api.getResponseBody(id).then((result) => {
+      if (store.selectedRequest?.id === id && result.body !== undefined) {
+        store.selectedRequest = { ...store.selectedRequest, response_body: result.body };
+      }
+    }).catch(() => {});
+  }
 }
 
 async function quickBackground(preset) {
-  await saveBackground({ ...store.background, mode: "preset", preset, image_path: "" });
+  await saveSettings({ ...store.background, mode: "preset", preset, image_path: "" });
 }
 
-async function saveBackground(value) {
+async function saveSettings(value) {
   await safeRun(async () => {
-    const saved = await api.saveSetting({ key: "background", value, description: "用户界面背景设置" });
-    Object.assign(store.background, saved);
+    const bgPayload = (({ mode, preset, color, image_path, blur, opacity }) =>
+      ({ mode, preset, color, image_path, blur, opacity }))(value);
+    const savedBg = await api.saveSetting({ key: "background", value: bgPayload, description: "用户界面背景设置" });
+    Object.assign(store.background, savedBg);
     settingsOpen.value = false;
-    store.notice = "背景设置已保存。";
+    store.notice = "设置已保存。";
   });
 }
 
 async function safeRun(task, showLoading = true) {
-  // 所有用户操作都走统一异常提示，避免界面无响应或显示原始堆栈。
   try {
     store.error = "";
     if (showLoading) store.loading = true;

@@ -65,35 +65,41 @@ def _terminate_stale_instances() -> None:
     app_path = str(Path(sys.executable).resolve())
     current_pid = str(os_getpid())
     runtime_dir = _runtime_dir()
-    profile_dir = str(runtime_dir / "chrome-profile")
+    profile_dirs = [
+        str(runtime_dir / "chrome-profile"),
+        str(runtime_dir / "edge-profile"),
+    ]
     driver_dir = str(Path(sys.executable).resolve().parent / "_internal" / "runtime" / "drivers")
     script = r"""
 param(
   [string]$AppPath,
   [string]$CurrentPid,
-  [string]$ProfileDir,
+  [string]$ProfileDirsStr,
   [string]$DriverDir
 )
-$escapedProfile = [WildcardPattern]::Escape($ProfileDir)
+$ProfileDirs = $ProfileDirsStr -split ';'
+$profilePatterns = $ProfileDirs | ForEach-Object { [WildcardPattern]::Escape($_) }
 $escapedDriver = [WildcardPattern]::Escape($DriverDir)
-$all = Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('NetworkCaptureTool.exe', 'chrome.exe', 'chromedriver.exe') }
+$killerProcesses = @('NetworkCaptureTool.exe', 'chrome.exe', 'chromedriver.exe', 'msedgewebview2.exe', 'msedgedriver.exe')
+$all = Get-CimInstance Win32_Process | Where-Object { $_.Name -in $killerProcesses }
 $oldApps = $all | Where-Object {
   $_.Name -eq 'NetworkCaptureTool.exe' -and
   $_.ProcessId -ne [int]$CurrentPid -and
   $_.ExecutablePath -eq $AppPath
 }
-$toolChrome = @()
+$toolBrowsers = @()
 if ($env:NETWORK_CAPTURE_KILL_PROFILE_CHROME_ON_STARTUP -eq '1') {
-  $toolChrome = $all | Where-Object {
-    $_.Name -eq 'chrome.exe' -and $_.CommandLine -like "*$escapedProfile*"
+  $toolBrowsers = $all | Where-Object {
+    $_.Name -in @('chrome.exe', 'msedgewebview2.exe') -and
+    ($profilePatterns | ForEach-Object { $_.CommandLine -like "*$_*" }) -contains $true
   }
 }
 $toolDrivers = $all | Where-Object {
-  $_.Name -eq 'chromedriver.exe' -and (
+  $_.Name -in @('chromedriver.exe', 'msedgedriver.exe') -and (
     $_.ExecutablePath -like "$escapedDriver*" -or $_.CommandLine -like "*$escapedDriver*"
   )
 }
-@($oldApps + $toolChrome + $toolDrivers) |
+@($oldApps + $toolBrowsers + $toolDrivers) |
   Sort-Object ProcessId -Unique |
   ForEach-Object {
     try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
@@ -117,8 +123,7 @@ $toolDrivers = $all | Where-Object {
                 app_path,
                 "-CurrentPid",
                 current_pid,
-                "-ProfileDir",
-                profile_dir,
+                "-ProfileDirsStr", ";".join(profile_dirs),
                 "-DriverDir",
                 driver_dir,
             ],

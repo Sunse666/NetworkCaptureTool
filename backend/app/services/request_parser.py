@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from app.services.curl_service import CurlService
 from app.services.dynamic_param_service import DynamicParamService
@@ -31,7 +32,6 @@ class RequestParser:
         changed_records: dict[str, dict[str, Any]] = {}
         completed_request_ids: set[str] = set()
         for event in events:
-            # Selenium performance log 和浏览器级 CDP 监听器的事件结构不同，这里统一成 method/params。
             message = event.get("message", event)
             method = message.get("method")
             params = message.get("params", {})
@@ -112,8 +112,13 @@ class RequestParser:
         }
 
     def _should_ignore_url(self, url: str) -> bool:
-        """过滤 data/blob/about 等非网络接口资源，避免超长内联资源污染接口采集。"""
-        return url.startswith(self.IGNORED_URL_PREFIXES)
+        """过滤 data/blob/about 等非网络接口资源，以及前端面板自身的 API 请求。"""
+        if url.startswith(self.IGNORED_URL_PREFIXES):
+            return True
+        parsed = urlparse(url)
+        if parsed.hostname in ("127.0.0.1", "localhost") and parsed.port == 8710:
+            return True
+        return False
 
     def _merge_response_event(self, record: dict[str, Any], params: dict[str, Any]) -> None:
         """合并响应事件，补充状态码、响应头和耗时。"""

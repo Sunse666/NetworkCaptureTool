@@ -66,7 +66,6 @@ watch(
 );
 
 function selectBackgroundFile(event) {
-  // 背景图片只在前端转成 data URL 保存，不读取本机路径，避免浏览器安全限制导致路径不可用。
   const file = event.target.files?.[0];
   if (!file) return;
   if (!file.type.startsWith("image/")) {
@@ -92,14 +91,12 @@ function selectBackgroundFile(event) {
 }
 
 function clearImage() {
-  // 移除图片后回到当前预设背景，保持设置状态可预期。
   draft.image_path = "";
   draft.mode = "preset";
   selectedFileName.value = "";
 }
 
 function selectPreset(preset) {
-  // 切换预设时清理自定义图片，防止保存后仍然加载旧图片。
   draft.preset = preset;
   draft.mode = "preset";
   draft.image_path = "";
@@ -107,7 +104,6 @@ function selectPreset(preset) {
 }
 
 function save() {
-  // 设置弹窗只提交配置草稿，由 App 负责调用后端保存和应用。
   if (localError.value) return;
   emit("save", { ...draft, mode: draft.image_path ? "image" : draft.mode });
 }

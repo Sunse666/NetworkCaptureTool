@@ -15,10 +15,19 @@ Pop-Location
 Write-Host "2/4 Prepare desktop runtime resources..."
 $backendDir = Join-Path $ProjectRoot "backend"
 $runtimeDriverDir = Join-Path $backendDir "runtime\drivers"
-$driverPath = Join-Path $runtimeDriverDir "chromedriver.exe"
+$chromeDriverPath = Join-Path $runtimeDriverDir "chromedriver.exe"
+$edgeDriverPath = Join-Path $runtimeDriverDir "msedgedriver.exe"
 New-Item -ItemType Directory -Path $runtimeDriverDir -Force | Out-Null
-if (-not (Test-Path $driverPath)) {
-  throw "Bundled chromedriver is missing: $driverPath"
+$hasChromeDriver = Test-Path $chromeDriverPath
+$hasEdgeDriver = Test-Path $edgeDriverPath
+if (-not $hasChromeDriver -and -not $hasEdgeDriver) {
+  throw "No bundled browser driver found. At least one of chromedriver.exe or msedgedriver.exe must exist in $runtimeDriverDir"
+}
+if (-not $hasChromeDriver) {
+  Write-Host "Warning: chromedriver.exe missing, Chrome browser support unavailable." -ForegroundColor Yellow
+}
+if (-not $hasEdgeDriver) {
+  Write-Host "Warning: msedgedriver.exe missing, WebView2 browser support unavailable." -ForegroundColor Yellow
 }
 
 # Desktop defaults use SQLite and the bundled driver.
@@ -55,6 +64,7 @@ python -m PyInstaller `
   --hidden-import "pydantic_settings" `
   --hidden-import "selenium" `
   --hidden-import "selenium.webdriver.chrome.webdriver" `
+  --hidden-import "selenium.webdriver.edge.webdriver" `
   --hidden-import "uvicorn.logging" `
   --hidden-import "uvicorn.loops.auto" `
   --hidden-import "uvicorn.protocols.http.auto" `

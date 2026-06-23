@@ -134,13 +134,13 @@ class CaptureService:
         )
         return [self._request_list_out(item) for item in requests]
 
-    def get_request_detail(self, db: Session, request_pk: int) -> CapturedRequestDetailOut:
-        """查询请求详情，并记录用户查看动作。"""
+    def get_request_detail(self, db: Session, request_pk: int, fetch_body: bool = True) -> CapturedRequestDetailOut:
+        """查询请求详情。fetch_body=False 时跳过 CDP 调用，首屏秒开。"""
         repo = CaptureRepository(db)
         request = repo.get_request(request_pk)
         if not request:
             raise AppError("请求记录不存在，可能已被清空或删除。", "REQUEST_NOT_FOUND", 404)
-        if request.response_body is None and request.is_api:
+        if fetch_body and request.response_body is None and request.is_api:
             response_body = browser_service.get_response_body(request.request_id)
             parsed_body = self.parser.parse_response_body(response_body, request.response_headers)
             if parsed_body is not None:
@@ -155,6 +155,22 @@ class CaptureService:
         )
         request = repo.mark_request_viewed(request)
         return self._request_detail_out(request)
+
+    def get_response_body(self, db: Session, request_pk: int) -> dict[str, Any]:
+        """单独获取请求响应体，供前端异步加载。"""
+        repo = CaptureRepository(db)
+        request = repo.get_request(request_pk)
+        if not request:
+            raise AppError("请求记录不存在。", "REQUEST_NOT_FOUND", 404)
+        if request.response_body is not None:
+            return {"cached": True, "body": request.response_body}
+        if not request.is_api:
+            return {"cached": True, "body": None}
+        raw = browser_service.get_response_body(request.request_id)
+        parsed = self.parser.parse_response_body(raw, request.response_headers)
+        if parsed is not None:
+            request = repo.update_response_body(request, parsed)
+        return {"cached": False, "body": parsed}
 
     def export_requests(self, db: Session, request_ids: list[int], export_format: str) -> dict[str, Any]:
         """按用户选择的格式批量导出请求，支持 OpenAPI、Postman、cURL 和 Apifox。"""
